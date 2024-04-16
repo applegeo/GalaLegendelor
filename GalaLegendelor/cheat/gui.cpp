@@ -5,7 +5,7 @@
 #include "../imgui/imgui_impl_win32.h"
 
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImpWin32_WndProcHandler(
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
 	HWND window,
 	UINT message,
 	WPARAM wideParameter,
@@ -18,7 +18,7 @@ long __stdcall WindowProcess(
 	WPARAM wideParameter,
 	LPARAM longParameter)
 {
-	if (ImGui_ImpWin32_WndProcHandler(window, message, wideParameter, longParameter))
+	if (ImGui_ImplWin32_WndProcHandler(window, message, wideParameter, longParameter))
 		return true;
 
 	switch (message)
@@ -41,7 +41,7 @@ long __stdcall WindowProcess(
 		return 0;
 	}
 	case WM_LBUTTONDOWN: {
-		gui::position = MAKEPOINTS(longParameter)l //set click points
+		gui::position = MAKEPOINTS(longParameter); //set click points
 	}return 0;
 
 	case WM_MOUSEMOVE: {
@@ -72,23 +72,23 @@ long __stdcall WindowProcess(
 
 	}
 
-	return DefWindowProcW(window, message, wideParameter, longParameter)
+	return DefWindowProcW(window, message, wideParameter, longParameter);
 }
 
 
 
 void gui::CreateHWindow(
 	const char* windowName,
-	const char* className)noexcept;
+	const char* className)noexcept
 {
-	windowClass.cb = sizeof(WNDCLASSEXA);
+	windowClass.cbSize = sizeof(WNDCLASSEXA);
 	windowClass.style = CS_CLASSDC;
 	windowClass.lpfnWndProc = WindowProcess;
 	windowClass.cbClsExtra = 0;
 	windowClass.cbWndExtra = 0;
-	windowClass.jInstance = GetModuleHandleA(0);
+	windowClass.hInstance = GetModuleHandleA(0);
 	windowClass.hIcon = 0;
-	windowClass.hCurosr = 0;
+	windowClass.hCursor = 0;
 	windowClass.hbrBackground = 0;
 	windowClass.lpszMenuName = 0;
 	windowClass.lpszClassName = className;
@@ -114,13 +114,13 @@ void gui::CreateHWindow(
 	UpdateWindow(window);
 }
 
-void gui::DestroyHWindow()noexcept;
+void gui::DestroyHWindow()noexcept
 {
 	DestroyWindow(window);
 	UnregisterClass(windowClass.lpszClassName, windowClass.hInstance);
 }
 
-bool gui::CreateDevice() noexcept;
+bool gui::CreateDevice() noexcept
 {
 	d3d = Direct3DCreate9(D3D_SDK_VERSION);
 
@@ -131,7 +131,7 @@ bool gui::CreateDevice() noexcept;
 
 	presentParameters.Windowed = TRUE;
 	presentParameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
-	presentParameters.BackBufferFormat = D3DFMT_UNKOWN;
+	presentParameters.BackBufferFormat = D3DFMT_UNKNOWN;
 	presentParameters.EnableAutoDepthStencil = TRUE;
 	presentParameters.AutoDepthStencilFormat = D3DFMT_D16;
 	presentParameters.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
@@ -149,38 +149,121 @@ bool gui::CreateDevice() noexcept;
 
 }
 
-void gui::ResetDevice() noexcept;
+void gui::ResetDevice() noexcept
 {
-	ImGui_Imp
+	ImGui_ImplDX9_InvalidateDeviceObjects();
+
+	const auto result = device->Reset(&presentParameters);
+
+	if (result == D3DERR_INVALIDCALL)
+		IM_ASSERT(0);
+
+	ImGui_ImplDX9_CreateDeviceObjects();
 }
 
-void gui::DestroyDevice()noexcept;
+void gui::DestroyDevice()noexcept
 {
-
-}
-
-
-void gui::CreateImGui()noexcept;
-{
-
-}
-
-void gui::DestroyImGui()noexcept;
-{
-
-}
-
-void gui::BeginRender()noexcept;
-{
-
-}
-
-void gui::EndRender()noexcept;
-{
+	if (device)
+	{
+		device->Release();
+		device = nullptr;
+	}
+	if (d3d)
+	{
+		d3d->Release();
+		d3d = nullptr;
+	}
 
 }
 
-void gui::Render()noexcept;
-{
 
+void gui::CreateImGui()noexcept
+{
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ::ImGui::GetIO();
+
+	io.IniFilename = NULL;
+
+	ImGui::StyleColorsDark();
+
+	ImGui_ImplWin32_Init(window);
+	ImGui_ImplDX9_Init(device);
+}
+
+void gui::DestroyImGui()noexcept
+{
+	ImGui_ImplDX9_Shutdown();
+	ImGui_ImplWin32_Shutdown();
+	ImGui::DestroyContext();
+}
+
+void gui::BeginRender()noexcept
+{
+	MSG message;
+	while (PeekMessage(&message, 0, 0, 0, PM_REMOVE))
+	{
+		TranslateMessage(&message);
+		DispatchMessage(&message);
+	}
+
+	//start the imgui frame
+	ImGui_ImplDX9_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
+}
+
+void gui::EndRender()noexcept
+{
+	ImGui::EndFrame();
+
+	device->SetRenderState(D3DRS_ZENABLE, FALSE);
+	device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+
+	device->Clear(0, 0, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(0, 0, 0, 255), 1.0f, 0);
+
+	if (device->BeginScene() >= 0)
+	{
+		ImGui::Render();
+		ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+		device->EndScene();
+	}
+
+	const auto result = device->Present(0, 0, 0, 0);
+
+	//muie d3d9 device
+	if (result == D3DERR_DEVICELOST && device->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+		ResetDevice();
+
+}
+
+void gui::Render()noexcept
+{
+	ImGui::SetNextWindowPos({ 0, 0 });
+	ImGui::SetNextWindowSize({ WIDTH, HEIGHT });
+	ImGui::Begin(
+		"Gala Legendelor",
+		&exit,
+		ImGuiWindowFlags_NoResize |
+		ImGuiWindowFlags_NoSavedSettings |
+		ImGuiWindowFlags_NoCollapse |
+		ImGuiWindowFlags_NoMove
+	);
+
+	bool result = LoadImageByMemory(device, logos102, sizeof(logos102), &ImageResource);
+	if (!result)
+		return false;
+	ImVec2 window_pos{ ImGui::GetWindowPos() };
+	ImVec2 windows_size{ ImGui::GetWindowSize() };
+	ImVec2 cursor_pos{ ImGui::GetCursorPos() };
+	ImVec2 image_size{ 770 / 2, 78 };
+	
+	ImGui::Image((void*)ImageResource, image_size);
+	GetBackgroundDrawlist()->AddImage();
+
+	ImGui::Button("PLAY");
+	ImGui::Button("Lock In");
+	ImGui::Button("Kys");
+	ImGui::End();
 }
